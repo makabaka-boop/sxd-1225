@@ -3,11 +3,12 @@ import { ref } from 'vue'
 import PlanView from './components/PlanView.vue'
 import SuppliesView from './components/SuppliesView.vue'
 import AlertsPanel from './components/AlertsPanel.vue'
-import { exportToCSV, checkAlerts } from './composables/usePetStore'
+import ExecutionRecordsView from './components/ExecutionRecordsView.vue'
+import { exportToCSV, checkAlertsEnhanced } from './composables/usePetStore'
 import { computed } from 'vue'
 
 const currentTab = ref('plan')
-const alertCount = computed(() => checkAlerts().length)
+const alertCount = computed(() => checkAlertsEnhanced().length)
 
 function handleExport() {
   exportToCSV()
@@ -43,6 +44,14 @@ function handleExport() {
             本周用品估算
           </button>
           <button
+            class="tab-btn"
+            :class="{ active: currentTab === 'records' }"
+            @click="currentTab = 'records'"
+          >
+            <span class="tab-icon">📝</span>
+            执行记录
+          </button>
+          <button
             class="tab-btn alert-tab"
             :class="{ active: currentTab === 'alerts', 'has-alert': alertCount > 0 }"
             @click="currentTab = 'alerts'"
@@ -67,6 +76,14 @@ function handleExport() {
       <div v-else-if="currentTab === 'supplies'" class="content-layout">
         <div class="main-content">
           <SuppliesView />
+        </div>
+        <aside class="side-panel">
+          <AlertsPanel />
+        </aside>
+      </div>
+      <div v-else-if="currentTab === 'records'" class="content-layout">
+        <div class="main-content">
+          <ExecutionRecordsView />
         </div>
         <aside class="side-panel">
           <AlertsPanel />

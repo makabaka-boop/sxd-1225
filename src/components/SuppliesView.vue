@@ -31,6 +31,7 @@
       <h3 class="section-title">
         <span class="section-icon">🍖</span>
         食物用量估算
+        <span class="section-subtitle">（含执行消耗对比）</span>
       </h3>
       <div v-if="foodList.length === 0" class="empty-section">
         <p>暂无食物相关计划数据</p>
@@ -41,8 +42,11 @@
             <tr>
               <th>食物类型</th>
               <th>类别</th>
-              <th>本周餐次</th>
-              <th>总克数</th>
+              <th>计划餐次</th>
+              <th>已执行餐次</th>
+              <th>预计总克数</th>
+              <th>已执行克数</th>
+              <th>剩余待喂食</th>
               <th>状态</th>
             </tr>
           </thead>
@@ -55,9 +59,23 @@
                 <span class="cat-badge food">{{ food.category }}</span>
               </td>
               <td class="num">{{ food.meals }} 餐</td>
+              <td class="num">
+                <span class="executed">{{ food.executedMeals || 0 }} 餐</span>
+              </td>
               <td class="num strong">{{ food.totalGrams.toLocaleString() }} g</td>
+              <td class="num">
+                <span class="executed-gram">{{ (food.executedGrams || 0).toLocaleString() }} g</span>
+              </td>
+              <td class="num">
+                <span :class="(food.remainingGrams || 0) < 0 ? 'text-danger' : 'text-success'">
+                  {{ (food.remainingGrams || 0).toLocaleString() }} g
+                </span>
+              </td>
               <td>
-                <span class="status-tag ok">按计划购买</span>
+                <span v-if="(food.executedGrams || 0) >= food.totalGrams && food.totalGrams > 0" class="status-tag prepare">
+                  已完成
+                </span>
+                <span v-else class="status-tag ok">进行中</span>
               </td>
             </tr>
           </tbody>
@@ -68,7 +86,7 @@
     <div class="section-card">
       <h3 class="section-title">
         <span class="section-icon">🧴</span>
-        用品消耗估算（按类别合并）
+        用品消耗估算（按类别合并 · 含执行对比）
       </h3>
       <div v-if="categoryList.length === 0" class="empty-section">
         <p>暂无用品消耗记录</p>
@@ -89,23 +107,25 @@
             <span class="cat-summary">
               <span class="cat-count">{{ cat.itemCount }} 种用品</span>
               <span class="divider">|</span>
-              <span>本周消耗 <strong>{{ cat.totalQuantity }}</strong></span>
+              <span>计划消耗 <strong class="planned-num">{{ cat.totalQuantity }}</strong></span>
               <span class="divider">|</span>
-              <span>库存 <strong>{{ cat.totalStock }}</strong></span>
+              <span>已执行 <strong class="executed-num">{{ cat.totalExecuted || 0 }}</strong></span>
+              <span class="divider">|</span>
+              <span>原库存 <strong>{{ cat.totalStock }}</strong></span>
               <span class="divider">|</span>
               <span
                 class="diff-num"
-                :class="cat.diff < 0 ? 'text-danger' : cat.diff <= 2 ? 'text-warning' : 'text-success'"
+                :class="(cat.totalRemaining !== undefined ? cat.totalRemaining : cat.diff) < 0 ? 'text-danger' : (cat.totalRemaining !== undefined ? cat.totalRemaining : cat.diff) <= 2 ? 'text-warning' : 'text-success'"
               >
-                差值 {{ cat.diff > 0 ? '+' : '' }}{{ cat.diff }}
+                扣减后剩余 {{ (cat.totalRemaining !== undefined ? cat.totalRemaining : cat.diff) > 0 ? '+' : '' }}{{ (cat.totalRemaining !== undefined ? cat.totalRemaining : cat.diff) }}
               </span>
             </span>
             <span class="cat-status">
-              <span v-if="cat.status === 'insufficient'" class="status-tag insufficient">
-                🔴 库存不足
+              <span v-if="cat.postStatus === 'insufficient'" class="status-tag insufficient">
+                🔴 已不足
               </span>
-              <span v-else-if="cat.status === 'prepare'" class="status-tag prepare">
-                🟡 需提前准备
+              <span v-else-if="cat.postStatus === 'prepare'" class="status-tag prepare">
+                🟡 扣减后偏低
               </span>
               <span v-else class="status-tag ok">
                 🟢 充足
@@ -117,9 +137,11 @@
               <thead>
                 <tr>
                   <th>用品名称</th>
-                  <th>本周消耗</th>
-                  <th>当前库存</th>
-                  <th>差值</th>
+                  <th>计划消耗</th>
+                  <th>已执行消耗</th>
+                  <th>计划待执行</th>
+                  <th>原始库存</th>
+                  <th>扣减后剩余</th>
                   <th>状态</th>
                 </tr>
               </thead>
@@ -128,24 +150,30 @@
                   v-for="(item, idx) in cat.items"
                   :key="idx"
                   :class="{
-                    'row-insufficient': item.status === 'insufficient',
-                    'row-prepare': item.status === 'prepare'
+                    'row-insufficient': item.postStatus === 'insufficient',
+                    'row-prepare': item.postStatus === 'prepare'
                   }"
                 >
                   <td>
                     <span class="item-name">{{ item.name }}</span>
                   </td>
-                  <td class="num">{{ item.quantity }}</td>
-                  <td class="num">{{ item.stock }}</td>
-                  <td class="num" :class="item.diff < 0 ? 'text-danger' : item.diff <= 2 ? 'text-warning' : 'text-success'">
-                    {{ item.diff > 0 ? '+' : '' }}{{ item.diff }}
+                  <td class="num planned-num">{{ item.quantity || 0 }}</td>
+                  <td class="num executed-num">{{ item.executedQuantity || 0 }}</td>
+                  <td class="num">
+                    <span :class="(item.plannedRemaining !== undefined && item.plannedRemaining < 0) ? 'text-danger' : ''">
+                      {{ item.plannedRemaining !== undefined ? item.plannedRemaining : (item.quantity || 0) }}
+                    </span>
+                  </td>
+                  <td class="num">{{ item.stock || 0 }}</td>
+                  <td class="num" :class="(item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) < 0 ? 'text-danger' : (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) <= 2 ? 'text-warning' : 'text-success'">
+                    {{ (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) > 0 ? '+' : '' }}{{ (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) }}
                   </td>
                   <td>
-                    <span v-if="item.status === 'insufficient'" class="status-tag insufficient">
-                      库存不足
+                    <span v-if="item.postStatus === 'insufficient'" class="status-tag insufficient">
+                      已不足
                     </span>
-                    <span v-else-if="item.status === 'prepare'" class="status-tag prepare">
-                      需提前准备
+                    <span v-else-if="item.postStatus === 'prepare'" class="status-tag prepare">
+                      扣减后偏低
                     </span>
                     <span v-else class="status-tag ok">
                       充足
@@ -201,9 +229,9 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { getWeeklySuppliesEstimate } from '../composables/usePetStore'
+import { getWeeklySuppliesEstimateWithExecution } from '../composables/usePetStore'
 
-const estimate = computed(() => getWeeklySuppliesEstimate())
+const estimate = computed(() => getWeeklySuppliesEstimateWithExecution())
 const foodList = computed(() => estimate.value.foodList)
 const supplyList = computed(() => estimate.value.supplyList)
 const categoryList = computed(() => estimate.value.categoryList)
@@ -220,11 +248,11 @@ function toggleCategory(idx) {
 }
 
 const totalItems = computed(() => foodList.value.length + supplyList.value.length)
-const insufficientItems = computed(() => supplyList.value.filter(i => i.status === 'insufficient'))
-const prepareItems = computed(() => supplyList.value.filter(i => i.status === 'prepare'))
+const insufficientItems = computed(() => supplyList.value.filter(i => i.postStatus === 'insufficient'))
+const prepareItems = computed(() => supplyList.value.filter(i => i.postStatus === 'prepare'))
 const insufficientCount = computed(() => insufficientItems.value.length)
 const prepareCount = computed(() => prepareItems.value.length)
-const okCount = computed(() => supplyList.value.filter(i => i.status === 'ok').length + foodList.value.length)
+const okCount = computed(() => supplyList.value.filter(i => i.postStatus === 'ok').length + foodList.value.length)
 
 function getCatClass(category) {
   const map = {
@@ -592,5 +620,32 @@ function getCatClass(category) {
     padding: 10px;
     font-size: 13px;
   }
+}
+
+.section-subtitle {
+  font-size: 12px;
+  color: #9ca3af;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.executed {
+  color: #4f46e5;
+  font-weight: 500;
+}
+
+.executed-gram {
+  color: #4f46e5;
+  font-weight: 500;
+}
+
+.planned-num {
+  color: #2563eb;
+  font-weight: 500;
+}
+
+.executed-num {
+  color: #7c3aed;
+  font-weight: 600;
 }
 </style>

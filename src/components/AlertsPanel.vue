@@ -71,12 +71,12 @@
 
 <script setup>
 import { ref, reactive, computed } from 'vue'
-import { settings, inventories, checkAlerts, SUPPLY_CATEGORIES } from '../composables/usePetStore'
+import { settings, inventories, checkAlertsEnhanced, SUPPLY_CATEGORIES } from '../composables/usePetStore'
 
 const showAddInv = ref(false)
 const newInv = reactive({ name: '', category: '其他', stock: 0 })
 
-const alerts = computed(() => checkAlerts())
+const alerts = computed(() => checkAlertsEnhanced())
 
 function addInventory() {
   if (!newInv.name.trim()) return

@@ -34,6 +34,10 @@
           <button v-for="s in STATUS_TYPES" :key="s.value" class="batch-item" @click="doBatch(s.value)">
             {{ s.label }}
           </button>
+          <div class="batch-divider"></div>
+          <button class="batch-item batch-execute" @click="openBatchExecuteModal">
+            ✓ 执行并扣减库存
+          </button>
         </div>
         <button class="btn btn-info" @click="$emit('export')">导出CSV</button>
         <button class="btn btn-primary" @click="openAddModal">
@@ -75,6 +79,11 @@
             {{ getStatusLabel(plan.status) }}
           </span>
           <div class="card-actions">
+            <button
+              v-if="plan.status !== 'completed'"
+              class="icon-btn success"
+              @click="openSingleExecuteModal(plan)"
+            >执行</button>
             <button class="icon-btn" @click="openEditModal(plan)">编辑</button>
             <button class="icon-btn danger" @click="removePlan(plan.id)">删除</button>
           </div>
@@ -240,6 +249,74 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showExecuteModal" class="modal-overlay" @click.self="closeExecuteModal">
+      <div class="modal modal-lg modal-xl">
+        <div class="modal-header">
+          <h3>{{ isBatchExecute ? '批量执行计划（扣减库存）' : '执行计划并扣减库存' }}</h3>
+          <button class="close-btn" @click="closeExecuteModal">×</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="executeFormList.length === 0" class="empty-section">
+            <p>无可执行计划</p>
+          </div>
+          <div v-else class="execute-plan-list">
+            <div v-for="(ef, idx) in executeFormList" :key="ef.planId" class="execute-plan-card">
+              <div class="exec-plan-header">
+                <span class="exec-plan-title">
+                  <strong>{{ ef.petName || '未命名宠物' }}</strong>
+                  <span class="meal-tag">{{ ef.meal }}</span>
+                  <span class="text-muted">{{ DAYS_OF_WEEK[ef.day] }}</span>
+                  <span class="text-muted">· {{ ef.foodType }}</span>
+                </span>
+                <span class="text-danger small" v-if="ef.status === 'completed'">已执行，将跳过</span>
+              </div>
+              <div class="exec-form-grid">
+                <div class="form-item">
+                  <label>计划克数</label>
+                  <input type="number" :value="ef.plannedGrams" disabled>
+                </div>
+                <div class="form-item">
+                  <label>实际喂食克数 *</label>
+                  <input type="number" v-model.number="ef.actualGrams" min="0">
+                </div>
+                <div class="form-item">
+                  <label>执行时间</label>
+                  <input type="datetime-local" v-model="ef.executeTimeStr">
+                </div>
+                <div class="form-item full">
+                  <label>实际消耗用品（默认使用计划配置，可调整）</label>
+                  <div class="supply-list">
+                    <div v-for="(s, sIdx) in ef.actualSupplies" :key="sIdx" class="supply-row">
+                      <input type="text" v-model="s.name" placeholder="用品名称">
+                      <select v-model="s.category">
+                        <option v-for="cat in SUPPLY_CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
+                      </select>
+                      <input type="number" v-model.number="s.quantity" placeholder="数量" min="0">
+                      <button class="icon-btn danger small" @click="ef.actualSupplies.splice(sIdx, 1)">删除</button>
+                    </div>
+                    <button class="btn btn-outline btn-sm" @click="addSupplyToExecForm(idx)">+ 添加用品</button>
+                  </div>
+                </div>
+                <div class="form-item full">
+                  <label>执行备注</label>
+                  <textarea v-model="ef.notes" rows="2" placeholder="喂食情况、宠物状态等备注"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="executeWarnings.length > 0" class="warnings-box">
+            <div v-for="(w, i) in executeWarnings" :key="i" class="warning-item">
+              ⚠️ {{ w }}
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-default" @click="closeExecuteModal">取消</button>
+          <button class="btn btn-success" @click="confirmExecute">✓ 确认执行并扣减库存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -260,7 +337,9 @@ import {
   getStatusColor,
   getPetNames,
   copyDayPlans,
-  batchUpdateStatus
+  batchUpdateStatus,
+  executePlan,
+  batchExecutePlans
 } from '../composables/usePetStore'
 
 defineEmits(['export'])
@@ -292,6 +371,106 @@ const formData = ref({
 const showCopyModal = ref(false)
 const copySource = ref(0)
 const copyTargets = ref([])
+
+const showExecuteModal = ref(false)
+const isBatchExecute = ref(false)
+const executeFormList = ref([])
+const executeWarnings = ref([])
+
+function formatLocalDateTimeStr(date = new Date()) {
+  const pad = n => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function parseDateTimeStr(str) {
+  if (!str) return new Date().toISOString()
+  const d = new Date(str)
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
+}
+
+function buildExecFormItem(plan) {
+  return {
+    planId: plan.id,
+    petName: plan.petName,
+    day: plan.day,
+    meal: plan.meal,
+    foodType: plan.foodType,
+    status: plan.status,
+    plannedGrams: Number(plan.grams) || 0,
+    actualGrams: Number(plan.grams) || 0,
+    executeTimeStr: formatLocalDateTimeStr(),
+    actualSupplies: plan.supplies.map(s => ({
+      name: s.name,
+      category: s.category || '其他',
+      quantity: Number(s.quantity) || 0
+    })),
+    notes: ''
+  }
+}
+
+function openSingleExecuteModal(plan) {
+  isBatchExecute.value = false
+  executeFormList.value = [buildExecFormItem(plan)]
+  executeWarnings.value = []
+  showExecuteModal.value = true
+  showBatchMenu.value = false
+}
+
+function openBatchExecuteModal() {
+  const plansToExec = plans.value.filter(p => selectedIds.value.includes(p.id))
+  if (plansToExec.length === 0) {
+    alert('请先选择要执行的计划')
+    return
+  }
+  isBatchExecute.value = true
+  executeFormList.value = plansToExec.map(buildExecFormItem)
+  executeWarnings.value = []
+  showExecuteModal.value = true
+  showBatchMenu.value = false
+}
+
+function closeExecuteModal() {
+  showExecuteModal.value = false
+  executeFormList.value = []
+  executeWarnings.value = []
+}
+
+function addSupplyToExecForm(idx) {
+  executeFormList.value[idx].actualSupplies.push({ name: '', category: '其他', quantity: 1 })
+}
+
+function confirmExecute() {
+  executeWarnings.value = []
+  let successCount = 0
+  const allWarnings = []
+
+  executeFormList.value.forEach(ef => {
+    const result = executePlan(ef.planId, {
+      actualGrams: ef.actualGrams,
+      actualSupplies: ef.actualSupplies.filter(s => s.name && s.quantity > 0),
+      executeTime: parseDateTimeStr(ef.executeTimeStr),
+      notes: ef.notes
+    })
+    if (result.success) {
+      successCount++
+      if (result.warnings) allWarnings.push(...result.warnings)
+    } else if (result.message) {
+      executeWarnings.value.push(`${ef.petName || '宠物'} ${ef.meal}: ${result.message}`)
+    }
+  })
+
+  executeWarnings.value.push(...allWarnings)
+  selectedIds.value = []
+
+  setTimeout(() => {
+    if (successCount > 0) {
+      alert(`成功执行 ${successCount} 条计划，库存已扣减`)
+    }
+    if (executeWarnings.value.length === 0) {
+      closeExecuteModal()
+    }
+  }, 50)
+}
 
 const petList = computed(() => getPetNames())
 
@@ -877,7 +1056,8 @@ watch(activeDay, () => {
 
 @media (max-width: 768px) {
   .info-grid,
-  .form-grid {
+  .form-grid,
+  .exec-form-grid {
     grid-template-columns: 1fr;
   }
   .week-tabs {
@@ -887,5 +1067,88 @@ watch(activeDay, () => {
     padding: 8px 14px;
     font-size: 13px;
   }
+}
+
+.batch-divider {
+  height: 1px;
+  background: #f3f4f6;
+  margin: 4px 0;
+}
+.batch-execute {
+  color: #059669;
+  font-weight: 600;
+}
+.batch-execute:hover { background: #ecfdf5 !important; }
+
+.icon-btn.success {
+  color: #059669;
+  border-color: #a7f3d0;
+}
+.icon-btn.success:hover { background: #ecfdf5; }
+
+.modal-xl {
+  max-width: 880px;
+}
+
+.empty-section {
+  padding: 30px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.execute-plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.execute-plan-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 16px;
+  background: #fafafa;
+}
+
+.exec-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.exec-plan-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #374151;
+  flex-wrap: wrap;
+}
+
+.text-danger.small {
+  font-size: 12px;
+}
+
+.exec-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.warnings-box {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+}
+
+.warning-item {
+  font-size: 13px;
+  color: #92400e;
+  line-height: 1.6;
 }
 </style>
