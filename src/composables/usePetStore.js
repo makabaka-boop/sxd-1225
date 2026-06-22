@@ -27,6 +27,12 @@ function saveToStorage(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
 }
 
+export const RESTOCK_STATUS_TYPES = [
+  { value: 'pending', label: '待采购', color: '#f59e0b' },
+  { value: 'purchased', label: '已采购', color: '#10b981' },
+  { value: 'cancelled', label: '已取消', color: '#6b7280' }
+]
+
 const saved = loadFromStorage()
 
 export const plans = ref(saved?.plans || [])
@@ -43,18 +49,22 @@ export const inventories = ref(saved?.inventories || [
   { name: '驱虫药', category: '药品', stock: 5 }
 ])
 export const executionRecords = ref(saved?.executionRecords || [])
+export const restockList = ref(saved?.restockList || [])
 
 let idCounter = saved?.idCounter || 1
 let recordIdCounter = saved?.recordIdCounter || 1
+let restockIdCounter = saved?.restockIdCounter || 1
 
-watch([plans, settings, inventories, executionRecords], () => {
+watch([plans, settings, inventories, executionRecords, restockList], () => {
   saveToStorage({
     plans: plans.value,
     settings,
     inventories: inventories.value,
     executionRecords: executionRecords.value,
+    restockList: restockList.value,
     idCounter,
-    recordIdCounter
+    recordIdCounter,
+    restockIdCounter
   })
 }, { deep: true })
 
@@ -403,6 +413,8 @@ export function executePlan(planId, executionData) {
   executionRecords.value.unshift(record)
 
   updatePlan(planId, { status: 'completed' })
+  
+  refreshRestockItemEstimates()
 
   return {
     success: true,
@@ -439,6 +451,8 @@ export function revokeExecution(recordId, revokeNotes = '') {
   if (plan && plan.status === 'completed') {
     updatePlan(plan.id, { status: 'pending' })
   }
+  
+  refreshRestockItemEstimates()
 
   return { success: true, record }
 }
@@ -694,4 +708,199 @@ export function checkAlertsEnhanced() {
   })
 
   return alerts
+}
+
+function generateRestockId() {
+  return `restock_${restockIdCounter++}`
+}
+
+export function getRestockStatusLabel(value) {
+  return RESTOCK_STATUS_TYPES.find(s => s.value === value)?.label || value
+}
+
+export function getRestockStatusColor(value) {
+  return RESTOCK_STATUS_TYPES.find(s => s.value === value)?.color || '#666'
+}
+
+export function addRestockItem(item) {
+  const inv = inventories.value.find(i => i.name === item.name)
+  const currentStock = inv?.stock || 0
+  
+  const estimate = getWeeklySuppliesEstimateWithExecution()
+  const supplyItem = estimate.supplyList.find(s => s.name === item.name)
+  const weeklyUsage = supplyItem?.quantity || 0
+  const estimatedGap = Math.max(0, weeklyUsage - currentStock)
+  
+  const suggestedQuantity = item.suggestedQuantity || 
+    (estimatedGap > 0 ? Math.ceil(estimatedGap * 1.5) : Math.ceil(weeklyUsage * 0.5) || 1)
+
+  const newItem = {
+    id: generateRestockId(),
+    name: item.name,
+    category: item.category || inv?.category || '其他',
+    currentStock,
+    weeklyUsage,
+    estimatedGap,
+    suggestedQuantity,
+    actualQuantity: item.actualQuantity || suggestedQuantity,
+    status: 'pending',
+    notes: item.notes || '',
+    source: item.source || 'manual',
+    relatedAlert: item.relatedAlert || null,
+    createdAt: new Date().toISOString(),
+    purchasedAt: null,
+    purchaseNotes: ''
+  }
+  
+  restockList.value.push(newItem)
+  return newItem
+}
+
+export function updateRestockItem(id, updates) {
+  const idx = restockList.value.findIndex(r => r.id === id)
+  if (idx !== -1) {
+    restockList.value[idx] = { ...restockList.value[idx], ...updates }
+    return restockList.value[idx]
+  }
+  return null
+}
+
+export function deleteRestockItem(id) {
+  const idx = restockList.value.findIndex(r => r.id === id)
+  if (idx !== -1) {
+    restockList.value.splice(idx, 1)
+    return true
+  }
+  return false
+}
+
+export function markRestockPurchased(id, purchaseData = {}) {
+  const idx = restockList.value.findIndex(r => r.id === id)
+  if (idx === -1) return { success: false, message: '补货项不存在' }
+  
+  const item = restockList.value[idx]
+  if (item.status === 'purchased') return { success: false, message: '该补货项已标记为已采购' }
+  
+  const quantity = Number(purchaseData.actualQuantity) || Number(item.actualQuantity) || 0
+  if (quantity <= 0) return { success: false, message: '采购数量必须大于0' }
+  
+  const inv = ensureInventoryItem(item.name, item.category)
+  inv.stock += quantity
+  
+  item.status = 'purchased'
+  item.actualQuantity = quantity
+  item.purchasedAt = purchaseData.purchasedAt || new Date().toISOString()
+  item.purchaseNotes = purchaseData.purchaseNotes || ''
+  
+  restockList.value[idx] = item
+  
+  return {
+    success: true,
+    item,
+    message: `已采购 ${item.name} ${quantity}，库存已更新`
+  }
+}
+
+export function cancelRestockItem(id) {
+  const idx = restockList.value.findIndex(r => r.id === id)
+  if (idx !== -1 && restockList.value[idx].status === 'pending') {
+    restockList.value[idx].status = 'cancelled'
+    return true
+  }
+  return false
+}
+
+export function reopenRestockItem(id) {
+  const idx = restockList.value.findIndex(r => r.id === id)
+  if (idx !== -1 && restockList.value[idx].status !== 'pending') {
+    const item = restockList.value[idx]
+    if (item.status === 'purchased') {
+      const inv = inventories.value.find(i => i.name === item.name)
+      if (inv) {
+        inv.stock = Math.max(0, inv.stock - (item.actualQuantity || 0))
+      }
+    }
+    item.status = 'pending'
+    item.purchasedAt = null
+    item.purchaseNotes = ''
+    return true
+  }
+  return false
+}
+
+export function autoGenerateRestockItems() {
+  const estimate = getWeeklySuppliesEstimateWithExecution()
+  const generated = []
+  const existingPendingNames = new Set(
+    restockList.value
+      .filter(r => r.status === 'pending')
+      .map(r => r.name)
+  )
+  
+  estimate.supplyList.forEach(supply => {
+    if (existingPendingNames.has(supply.name)) return
+    
+    const needsRestock = supply.postStatus === 'insufficient' || supply.postStatus === 'prepare'
+    
+    if (needsRestock) {
+      const item = addRestockItem({
+        name: supply.name,
+        category: supply.category,
+        source: 'auto',
+        notes: supply.postStatus === 'insufficient' 
+          ? '系统自动生成：库存不足，无法满足本周需求' 
+          : '系统自动生成：预计本周消耗后库存偏低'
+      })
+      generated.push(item)
+    }
+  })
+  
+  inventories.value.forEach(inv => {
+    if (existingPendingNames.has(inv.name)) return
+    if (generated.some(g => g.name === inv.name)) return
+    
+    if (inv.stock <= 2) {
+      const item = addRestockItem({
+        name: inv.name,
+        category: inv.category,
+        source: 'auto',
+        notes: `系统自动生成：当前库存仅余 ${inv.stock}，库存偏低`
+      })
+      generated.push(item)
+    }
+  })
+  
+  return generated
+}
+
+export function isInRestockList(name) {
+  return restockList.value.some(r => r.name === name && r.status === 'pending')
+}
+
+export function getRestockItems(filters = {}) {
+  return restockList.value.filter(r => {
+    if (filters.status && r.status !== filters.status) return false
+    if (filters.category && r.category !== filters.category) return false
+    if (filters.search && !r.name.includes(filters.search)) return false
+    return true
+  })
+}
+
+export function refreshRestockItemEstimates() {
+  const estimate = getWeeklySuppliesEstimateWithExecution()
+  
+  restockList.value.forEach(item => {
+    if (item.status !== 'pending') return
+    
+    const inv = inventories.value.find(i => i.name === item.name)
+    const supplyItem = estimate.supplyList.find(s => s.name === item.name)
+    
+    if (inv) {
+      item.currentStock = inv.stock
+    }
+    if (supplyItem) {
+      item.weeklyUsage = supplyItem.quantity || 0
+      item.estimatedGap = Math.max(0, item.weeklyUsage - item.currentStock)
+    }
+  })
 }

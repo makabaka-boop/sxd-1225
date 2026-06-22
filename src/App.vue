@@ -1,14 +1,15 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import PlanView from './components/PlanView.vue'
 import SuppliesView from './components/SuppliesView.vue'
 import AlertsPanel from './components/AlertsPanel.vue'
 import ExecutionRecordsView from './components/ExecutionRecordsView.vue'
-import { exportToCSV, checkAlertsEnhanced } from './composables/usePetStore'
-import { computed } from 'vue'
+import RestockListView from './components/RestockListView.vue'
+import { exportToCSV, checkAlertsEnhanced, restockList } from './composables/usePetStore'
 
 const currentTab = ref('plan')
 const alertCount = computed(() => checkAlertsEnhanced().length)
+const pendingRestockCount = computed(() => restockList.value.filter(r => r.status === 'pending').length)
 
 function handleExport() {
   exportToCSV()
@@ -52,6 +53,15 @@ function handleExport() {
             执行记录
           </button>
           <button
+            class="tab-btn"
+            :class="{ active: currentTab === 'restock', 'has-alert': pendingRestockCount > 0 }"
+            @click="currentTab = 'restock'"
+          >
+            <span class="tab-icon">🛒</span>
+            补货清单
+            <span v-if="pendingRestockCount > 0" class="tab-badge">{{ pendingRestockCount }}</span>
+          </button>
+          <button
             class="tab-btn alert-tab"
             :class="{ active: currentTab === 'alerts', 'has-alert': alertCount > 0 }"
             @click="currentTab = 'alerts'"
@@ -84,6 +94,14 @@ function handleExport() {
       <div v-else-if="currentTab === 'records'" class="content-layout">
         <div class="main-content">
           <ExecutionRecordsView />
+        </div>
+        <aside class="side-panel">
+          <AlertsPanel />
+        </aside>
+      </div>
+      <div v-else-if="currentTab === 'restock'" class="content-layout">
+        <div class="main-content">
+          <RestockListView />
         </div>
         <aside class="side-panel">
           <AlertsPanel />

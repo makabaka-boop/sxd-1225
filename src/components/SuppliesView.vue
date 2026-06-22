@@ -143,6 +143,7 @@
                   <th>原始库存</th>
                   <th>扣减后剩余</th>
                   <th>状态</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -178,6 +179,16 @@
                     <span v-else class="status-tag ok">
                       充足
                     </span>
+                  </td>
+                  <td>
+                    <button
+                      v-if="item.postStatus !== 'ok'"
+                      class="add-restock-btn"
+                      :disabled="isInRestockList(item.name)"
+                      @click="handleAddToRestock(item)"
+                    >
+                      {{ isInRestockList(item.name) ? '✓ 已在清单' : '+ 补货' }}
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -229,7 +240,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { getWeeklySuppliesEstimateWithExecution } from '../composables/usePetStore'
+import { getWeeklySuppliesEstimateWithExecution, addRestockItem, isInRestockList } from '../composables/usePetStore'
 
 const estimate = computed(() => getWeeklySuppliesEstimateWithExecution())
 const foodList = computed(() => estimate.value.foodList)
@@ -263,6 +274,21 @@ function getCatClass(category) {
     '药品': 'medicine'
   }
   return map[category] || 'other'
+}
+
+function handleAddToRestock(item) {
+  const restockItem = addRestockItem({
+    name: item.name,
+    category: item.category,
+    notes: item.postStatus === 'insufficient' 
+      ? `库存不足，缺口 ${Math.abs(item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff)}` 
+      : `库存偏低，剩余 ${item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff}`,
+    source: 'estimate'
+  })
+  
+  if (restockItem) {
+    window.alert(`已将"${item.name}"加入补货清单`)
+  }
 }
 </script>
 
@@ -647,5 +673,27 @@ function getCatClass(category) {
 .executed-num {
   color: #7c3aed;
   font-weight: 600;
+}
+
+.add-restock-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.add-restock-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.2);
+}
+.add-restock-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.2);
 }
 </style>

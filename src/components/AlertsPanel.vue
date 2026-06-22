@@ -19,7 +19,17 @@
         :class="alert.type"
       >
         <span class="alert-icon">{{ alert.type === 'danger' ? '🔴' : '🟡' }}</span>
-        <span class="alert-text">{{ alert.message }}</span>
+        <div class="alert-content">
+          <span class="alert-text">{{ alert.message }}</span>
+          <button
+            v-if="getSupplyNameFromAlert(alert.message)"
+            class="add-restock-btn"
+            :disabled="isInRestockList(getSupplyNameFromAlert(alert.message))"
+            @click="handleAddToRestock(alert)"
+          >
+            {{ isInRestockList(getSupplyNameFromAlert(alert.message)) ? '✓ 已在清单' : '+ 加入补货' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -70,13 +80,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
-import { settings, inventories, checkAlertsEnhanced, SUPPLY_CATEGORIES } from '../composables/usePetStore'
+import { ref, reactive, computed, watch } from 'vue'
+import { settings, inventories, checkAlertsEnhanced, SUPPLY_CATEGORIES, addRestockItem, isInRestockList, refreshRestockItemEstimates } from '../composables/usePetStore'
 
 const showAddInv = ref(false)
 const newInv = reactive({ name: '', category: '其他', stock: 0 })
 
 const alerts = computed(() => checkAlertsEnhanced())
+
+watch(inventories, () => {
+  refreshRestockItemEstimates()
+}, { deep: true })
 
 function addInventory() {
   if (!newInv.name.trim()) return
@@ -89,6 +103,28 @@ function addInventory() {
   newInv.category = '其他'
   newInv.stock = 0
   showAddInv.value = false
+}
+
+function getSupplyNameFromAlert(message) {
+  const match = message.match(/用品"([^"]+)"/)
+  return match ? match[1] : null
+}
+
+function handleAddToRestock(alertItem) {
+  const supplyName = getSupplyNameFromAlert(alertItem.message)
+  if (!supplyName) return
+  
+  const inv = inventories.value.find(i => i.name === supplyName)
+  const item = addRestockItem({
+    name: supplyName,
+    category: inv?.category || '其他',
+    notes: alertItem.message,
+    source: 'alert'
+  })
+  
+  if (item) {
+    window.alert(`已将"${supplyName}"加入补货清单`)
+  }
 }
 </script>
 
@@ -191,8 +227,37 @@ function addInventory() {
   line-height: 1.5;
 }
 
-.alert-text {
+.alert-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.alert-text {
+  line-height: 1.5;
+}
+
+.add-restock-btn {
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.add-restock-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.2);
+}
+.add-restock-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.2);
 }
 
 .settings-section {
