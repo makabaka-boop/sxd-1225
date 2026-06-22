@@ -84,6 +84,15 @@ export function addPlan(plan) {
 export function updatePlan(id, updates) {
   const idx = plans.value.findIndex(p => p.id === id)
   if (idx !== -1) {
+    const oldPlan = plans.value[idx]
+    const wasCompleted = oldPlan.status === 'completed'
+    const newStatus = updates.status
+    if (wasCompleted && newStatus && newStatus !== 'completed') {
+      const latestExec = executionRecords.value.find(r => r.planId === id && !r.revoked)
+      if (latestExec) {
+        revokeExecution(latestExec.id, '计划状态变更，自动撤销执行')
+      }
+    }
     plans.value[idx] = { ...plans.value[idx], ...updates }
   }
 }
@@ -490,7 +499,7 @@ export function getWeeklySuppliesEstimateWithExecution() {
   const executedSupplies = getExecutedSuppliesSummary()
 
   const foodMap = {}
-  base.foodList.forEach(f => { foodMap[f.name] = f })
+  base.foodList.forEach(f => { foodMap[f.name] = { ...f } })
   executedFood.forEach(ef => {
     if (foodMap[ef.name]) {
       foodMap[ef.name].executedGrams = ef.executedGrams
@@ -520,11 +529,13 @@ export function getWeeklySuppliesEstimateWithExecution() {
   executedSupplies.forEach(es => {
     if (supplyMap[es.name]) {
       supplyMap[es.name].executedQuantity = es.executedQuantity
-      supplyMap[es.name].remainingQuantity = Math.max(0, (supplyMap[es.name].stock || 0) - es.executedQuantity)
+      supplyMap[es.name].originalStock = (supplyMap[es.name].stock || 0) + es.executedQuantity
+      supplyMap[es.name].remainingQuantity = supplyMap[es.name].stock || 0
       supplyMap[es.name].plannedRemaining = Math.max(0,
         (supplyMap[es.name].quantity || 0) - es.executedQuantity)
-      const diff = (supplyMap[es.name].stock || 0) - es.executedQuantity
-      supplyMap[es.name].postStatus = diff < 0 ? 'insufficient' : diff <= 2 ? 'prepare' : 'ok'
+      const currentStock = supplyMap[es.name].stock || 0
+      supplyMap[es.name].postStatus = currentStock < 0 ? 'insufficient' : currentStock <= 2 ? 'prepare' : 'ok'
+      supplyMap[es.name].diff = (supplyMap[es.name].stock || 0) + es.executedQuantity - (supplyMap[es.name].quantity || 0)
     } else {
       const inv = inventories.value.find(i => i.name === es.name)
       const stock = inv?.stock || 0
@@ -533,40 +544,56 @@ export function getWeeklySuppliesEstimateWithExecution() {
         category: es.category,
         quantity: 0,
         stock,
-        diff: stock,
+        originalStock: stock + es.executedQuantity,
+        diff: stock + es.executedQuantity,
         status: stock < 0 ? 'insufficient' : stock <= 2 ? 'prepare' : 'ok',
         executedQuantity: es.executedQuantity,
-        remainingQuantity: Math.max(0, stock - es.executedQuantity),
+        remainingQuantity: stock,
         plannedRemaining: -es.executedQuantity,
-        postStatus: (stock - es.executedQuantity) < 0 ? 'insufficient'
-          : (stock - es.executedQuantity) <= 2 ? 'prepare' : 'ok'
+        postStatus: stock < 0 ? 'insufficient' : stock <= 2 ? 'prepare' : 'ok'
       }
     }
   })
   Object.values(supplyMap).forEach(s => {
-    if (s.executedQuantity === undefined) s.executedQuantity = 0
+    if (s.executedQuantity === undefined) {
+      s.executedQuantity = 0
+      s.originalStock = s.stock || 0
+    }
     if (s.remainingQuantity === undefined) s.remainingQuantity = s.stock || 0
     if (s.plannedRemaining === undefined) s.plannedRemaining = s.quantity || 0
     if (s.postStatus === undefined) s.postStatus = s.status
+    if (s.originalStock === undefined) s.originalStock = s.stock || 0
   })
 
   const newCategoryList = base.categoryList.map(cat => {
     const newItems = cat.items.map(item => {
       const enhanced = supplyMap[item.name]
-      return enhanced || { ...item, executedQuantity: 0, remainingQuantity: item.stock, plannedRemaining: item.quantity, postStatus: item.status }
+      return enhanced || {
+        ...item,
+        executedQuantity: 0,
+        originalStock: item.stock,
+        remainingQuantity: item.stock,
+        plannedRemaining: item.quantity,
+        postStatus: item.status
+      }
     })
     const executedNotInPlan = Object.values(supplyMap).filter(s =>
       s.category === cat.category && !newItems.find(ni => ni.name === s.name)
     )
     const totalExecuted = newItems.reduce((sum, it) => sum + (it.executedQuantity || 0), 0)
       + executedNotInPlan.reduce((sum, it) => sum + (it.executedQuantity || 0), 0)
+    const totalOriginalStock = newItems.reduce((sum, it) => sum + (it.originalStock || 0), 0)
+      + executedNotInPlan.reduce((sum, it) => sum + (it.originalStock || 0), 0)
+    const totalCurrentStock = newItems.reduce((sum, it) => sum + (it.remainingQuantity || 0), 0)
+      + executedNotInPlan.reduce((sum, it) => sum + (it.remainingQuantity || 0), 0)
     const hasInsufficient = [...newItems, ...executedNotInPlan].some(it => it.postStatus === 'insufficient')
     const hasPrepare = [...newItems, ...executedNotInPlan].some(it => it.postStatus === 'prepare')
     return {
       ...cat,
       items: [...newItems, ...executedNotInPlan],
       totalExecuted,
-      totalRemaining: cat.totalStock - totalExecuted,
+      totalOriginalStock,
+      totalRemaining: totalCurrentStock,
       postStatus: hasInsufficient ? 'insufficient' : hasPrepare ? 'prepare' : cat.status
     }
   })
@@ -579,9 +606,10 @@ export function getWeeklySuppliesEstimateWithExecution() {
         category: s.category,
         items: [s],
         totalQuantity: 0,
-        totalStock: s.stock || 0,
+        totalStock: s.originalStock || 0,
+        totalOriginalStock: s.originalStock || 0,
         totalExecuted: s.executedQuantity,
-        totalRemaining: (s.stock || 0) - s.executedQuantity,
+        totalRemaining: s.stock || 0,
         itemCount: 1,
         postStatus: s.postStatus,
         status: s.status,
@@ -600,6 +628,14 @@ export function getWeeklySuppliesEstimateWithExecution() {
     supplyList: Object.values(supplyMap),
     categoryList: finalCategoryList
   }
+}
+
+function isToday(isoStr) {
+  const d = new Date(isoStr)
+  const today = new Date()
+  return d.getFullYear() === today.getFullYear()
+    && d.getMonth() === today.getMonth()
+    && d.getDate() === today.getDate()
 }
 
 export function checkAlertsEnhanced() {
@@ -626,36 +662,23 @@ export function checkAlertsEnhanced() {
       }
     })
 
-  const stockAfterExec = {}
   inventories.value.forEach(inv => {
-    stockAfterExec[inv.name] = { ...inv, remaining: inv.stock }
-  })
-  executionRecords.value
-    .filter(r => !r.revoked)
-    .forEach(r => {
-      r.stockChanges.forEach(sc => {
-        if (stockAfterExec[sc.name]) {
-          stockAfterExec[sc.name].remaining = Math.max(0, stockAfterExec[sc.name].remaining - sc.amount)
-        }
-      })
-    })
-  Object.entries(stockAfterExec).forEach(([name, data]) => {
-    if (data.remaining <= 0 && data.stock > 0) {
+    if (inv.stock <= 0) {
       alerts.push({
         type: 'danger',
-        message: `用品"${name}"执行扣减后库存已耗尽，请尽快补货`
+        message: `用品"${inv.name}"当前库存已耗尽，请尽快补货`
       })
-    } else if (data.remaining > 0 && data.remaining <= 2 && data.stock > 0) {
+    } else if (inv.stock <= 2) {
       alerts.push({
         type: 'warning',
-        message: `用品"${name}"执行扣减后库存偏低，剩余 ${data.remaining}`
+        message: `用品"${inv.name}"库存偏低，当前剩余 ${inv.stock}`
       })
     }
   })
 
   const petDailyExecGrams = {}
   executionRecords.value
-    .filter(r => !r.revoked && r.day === todayIdx)
+    .filter(r => !r.revoked && isToday(r.executeTime))
     .forEach(r => {
       const key = r.petName
       if (!petDailyExecGrams[key]) petDailyExecGrams[key] = 0

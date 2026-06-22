@@ -180,8 +180,7 @@ import {
   executionRecords,
   DAYS_OF_WEEK,
   getPetNames,
-  revokeExecution,
-  getTodayWeekdayIndex
+  revokeExecution
 } from '../composables/usePetStore'
 
 const petList = computed(() => getPetNames())
@@ -195,12 +194,26 @@ const showRevokeModal = ref(false)
 const revokeRecord = ref(null)
 const revokeNotes = ref('')
 
+function getLocalDateStr(isoStr) {
+  const d = new Date(isoStr)
+  if (isNaN(d.getTime())) return ''
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function isToday(isoStr) {
+  const d = new Date(isoStr)
+  const today = new Date()
+  return d.getFullYear() === today.getFullYear()
+    && d.getMonth() === today.getMonth()
+    && d.getDate() === today.getDate()
+}
+
 const totalCount = computed(() => executionRecords.value.length)
 const validCount = computed(() => executionRecords.value.filter(r => !r.revoked).length)
 const revokedCount = computed(() => executionRecords.value.filter(r => r.revoked).length)
 const todayCount = computed(() => {
-  const todayIdx = getTodayWeekdayIndex()
-  return executionRecords.value.filter(r => r.day === todayIdx && !r.revoked).length
+  return executionRecords.value.filter(r => !r.revoked && isToday(r.executeTime)).length
 })
 
 const filteredRecords = computed(() => {
@@ -210,7 +223,7 @@ const filteredRecords = computed(() => {
     if (filterStatus.value === 'valid' && r.revoked) return false
     if (filterStatus.value === 'revoked' && !r.revoked) return false
     if (filterDate.value) {
-      const execDate = new Date(r.executeTime).toISOString().slice(0, 10)
+      const execDate = getLocalDateStr(r.executeTime)
       if (execDate !== filterDate.value) return false
     }
     return true

@@ -111,7 +111,7 @@
               <span class="divider">|</span>
               <span>已执行 <strong class="executed-num">{{ cat.totalExecuted || 0 }}</strong></span>
               <span class="divider">|</span>
-              <span>原库存 <strong>{{ cat.totalStock }}</strong></span>
+              <span>原库存 <strong>{{ cat.totalOriginalStock !== undefined ? cat.totalOriginalStock : cat.totalStock }}</strong></span>
               <span class="divider">|</span>
               <span
                 class="diff-num"
@@ -164,7 +164,7 @@
                       {{ item.plannedRemaining !== undefined ? item.plannedRemaining : (item.quantity || 0) }}
                     </span>
                   </td>
-                  <td class="num">{{ item.stock || 0 }}</td>
+                  <td class="num">{{ item.originalStock !== undefined ? item.originalStock : (item.stock || 0) }}</td>
                   <td class="num" :class="(item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) < 0 ? 'text-danger' : (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) <= 2 ? 'text-warning' : 'text-success'">
                     {{ (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) > 0 ? '+' : '' }}{{ (item.remainingQuantity !== undefined ? item.remainingQuantity : item.diff) }}
                   </td>
