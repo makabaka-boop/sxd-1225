@@ -156,16 +156,29 @@ export function checkAlerts() {
     })
   }
 
+  const supplyTotal = {}
   plans.value.forEach(p => {
     p.supplies.forEach(supply => {
-      const inv = inventories.value.find(i => i.name === supply.name)
-      if (inv && Number(supply.quantity) > inv.stock) {
-        alerts.push({
-          type: 'danger',
-          message: `用品"${supply.name}"消耗 ${supply.quantity} 超过库存 ${inv.stock}`
-        })
+      const name = supply.name
+      if (!supplyTotal[name]) {
+        supplyTotal[name] = { quantity: 0, category: supply.category || '其他' }
       }
+      supplyTotal[name].quantity += Number(supply.quantity) || 0
     })
+  })
+  Object.entries(supplyTotal).forEach(([name, data]) => {
+    const inv = inventories.value.find(i => i.name === name)
+    if (inv && data.quantity > inv.stock) {
+      alerts.push({
+        type: 'danger',
+        message: `用品"${name}"本周累计消耗 ${data.quantity} 超过库存 ${inv.stock}，缺 ${data.quantity - inv.stock}`
+      })
+    } else if (inv && inv.stock - data.quantity <= 2 && inv.stock - data.quantity >= 0) {
+      alerts.push({
+        type: 'warning',
+        message: `用品"${name}"库存偏低，本周消耗 ${data.quantity}，剩余 ${inv.stock - data.quantity}`
+      })
+    }
   })
 
   const mealCombo = {}
@@ -205,9 +218,9 @@ export function checkAlerts() {
 export function getWeeklySuppliesEstimate() {
   const foodEstimate = {}
   const supplyEstimate = {}
+  const categoryEstimate = {}
 
   plans.value.forEach(p => {
-    const foodKey = `${p.foodType}|${p.grams > 50 ? '按克计算' : '按份'}`
     if (!foodEstimate[p.foodType]) {
       foodEstimate[p.foodType] = { grams: 0, meals: 0 }
     }
@@ -215,10 +228,18 @@ export function getWeeklySuppliesEstimate() {
     foodEstimate[p.foodType].meals += 1
 
     p.supplies.forEach(s => {
+      const sCategory = s.category || '其他'
       if (!supplyEstimate[s.name]) {
-        supplyEstimate[s.name] = { name: s.name, category: s.category || '其他', quantity: 0 }
+        supplyEstimate[s.name] = { name: s.name, category: sCategory, quantity: 0 }
       }
       supplyEstimate[s.name].quantity += Number(s.quantity) || 0
+
+      if (!categoryEstimate[sCategory]) {
+        categoryEstimate[sCategory] = { category: sCategory, items: [], totalQuantity: 0, totalStock: 0 }
+      }
+      if (!categoryEstimate[sCategory].items.find(it => it.name === s.name)) {
+        categoryEstimate[sCategory].items.push(supplyEstimate[s.name])
+      }
     })
   })
 
@@ -242,7 +263,34 @@ export function getWeeklySuppliesEstimate() {
     }
   })
 
-  return { foodList, supplyList }
+  Object.values(categoryEstimate).forEach(cat => {
+    let totalStock = 0
+    let itemCount = 0
+    let hasInsufficient = false
+    let hasPrepare = false
+    cat.items = cat.items.map(item => {
+      const fullItem = supplyList.find(s => s.name === item.name)
+      if (fullItem) {
+        totalStock += fullItem.stock
+        itemCount++
+        if (fullItem.status === 'insufficient') hasInsufficient = true
+        else if (fullItem.status === 'prepare') hasPrepare = true
+      }
+      return fullItem || item
+    })
+    cat.totalStock = totalStock
+    cat.itemCount = itemCount
+    cat.totalQuantity = cat.items.reduce((sum, it) => sum + (it.quantity || 0), 0)
+    cat.status = hasInsufficient ? 'insufficient' : hasPrepare ? 'prepare' : itemCount > 0 ? 'ok' : 'ok'
+    cat.diff = totalStock - cat.totalQuantity
+  })
+
+  const categoryList = Object.values(categoryEstimate).sort((a, b) => {
+    const order = SUPPLY_CATEGORIES
+    return order.indexOf(a.category) - order.indexOf(b.category)
+  })
+
+  return { foodList, supplyList, categoryList }
 }
 
 export function exportToCSV() {

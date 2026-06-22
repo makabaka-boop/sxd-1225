@@ -68,57 +68,94 @@
     <div class="section-card">
       <h3 class="section-title">
         <span class="section-icon">🧴</span>
-        用品消耗估算
+        用品消耗估算（按类别合并）
       </h3>
-      <div v-if="supplyList.length === 0" class="empty-section">
+      <div v-if="categoryList.length === 0" class="empty-section">
         <p>暂无用品消耗记录</p>
       </div>
-      <div v-else class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>用品名称</th>
-              <th>类别</th>
-              <th>本周消耗</th>
-              <th>当前库存</th>
-              <th>差值</th>
-              <th>状态</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(item, idx) in supplyList"
-              :key="idx"
-              :class="{
-                'row-insufficient': item.status === 'insufficient',
-                'row-prepare': item.status === 'prepare'
-              }"
-            >
-              <td>
-                <span class="item-name">{{ item.name }}</span>
-              </td>
-              <td>
-                <span class="cat-badge" :class="getCatClass(item.category)">{{ item.category }}</span>
-              </td>
-              <td class="num">{{ item.quantity }}</td>
-              <td class="num">{{ item.stock }}</td>
-              <td class="num" :class="item.diff < 0 ? 'text-danger' : item.diff <= 2 ? 'text-warning' : 'text-success'">
-                {{ item.diff > 0 ? '+' : '' }}{{ item.diff }}
-              </td>
-              <td>
-                <span v-if="item.status === 'insufficient'" class="status-tag insufficient">
-                  🔴 库存不足
-                </span>
-                <span v-else-if="item.status === 'prepare'" class="status-tag prepare">
-                  🟡 需提前准备
-                </span>
-                <span v-else class="status-tag ok">
-                  🟢 充足
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-else class="category-groups">
+        <div
+          v-for="(cat, cIdx) in categoryList"
+          :key="cIdx"
+          class="category-group"
+          :class="{
+            'group-insufficient': cat.status === 'insufficient',
+            'group-prepare': cat.status === 'prepare'
+          }"
+        >
+          <div class="category-header" @click="toggleCategory(cIdx)">
+            <span class="expand-icon">{{ expandedCategories.includes(cIdx) ? '▼' : '▶' }}</span>
+            <span class="cat-badge large" :class="getCatClass(cat.category)">{{ cat.category }}</span>
+            <span class="cat-summary">
+              <span class="cat-count">{{ cat.itemCount }} 种用品</span>
+              <span class="divider">|</span>
+              <span>本周消耗 <strong>{{ cat.totalQuantity }}</strong></span>
+              <span class="divider">|</span>
+              <span>库存 <strong>{{ cat.totalStock }}</strong></span>
+              <span class="divider">|</span>
+              <span
+                class="diff-num"
+                :class="cat.diff < 0 ? 'text-danger' : cat.diff <= 2 ? 'text-warning' : 'text-success'"
+              >
+                差值 {{ cat.diff > 0 ? '+' : '' }}{{ cat.diff }}
+              </span>
+            </span>
+            <span class="cat-status">
+              <span v-if="cat.status === 'insufficient'" class="status-tag insufficient">
+                🔴 库存不足
+              </span>
+              <span v-else-if="cat.status === 'prepare'" class="status-tag prepare">
+                🟡 需提前准备
+              </span>
+              <span v-else class="status-tag ok">
+                🟢 充足
+              </span>
+            </span>
+          </div>
+          <div v-show="expandedCategories.includes(cIdx)" class="category-items">
+            <table class="data-table inner-table">
+              <thead>
+                <tr>
+                  <th>用品名称</th>
+                  <th>本周消耗</th>
+                  <th>当前库存</th>
+                  <th>差值</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(item, idx) in cat.items"
+                  :key="idx"
+                  :class="{
+                    'row-insufficient': item.status === 'insufficient',
+                    'row-prepare': item.status === 'prepare'
+                  }"
+                >
+                  <td>
+                    <span class="item-name">{{ item.name }}</span>
+                  </td>
+                  <td class="num">{{ item.quantity }}</td>
+                  <td class="num">{{ item.stock }}</td>
+                  <td class="num" :class="item.diff < 0 ? 'text-danger' : item.diff <= 2 ? 'text-warning' : 'text-success'">
+                    {{ item.diff > 0 ? '+' : '' }}{{ item.diff }}
+                  </td>
+                  <td>
+                    <span v-if="item.status === 'insufficient'" class="status-tag insufficient">
+                      库存不足
+                    </span>
+                    <span v-else-if="item.status === 'prepare'" class="status-tag prepare">
+                      需提前准备
+                    </span>
+                    <span v-else class="status-tag ok">
+                      充足
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -163,12 +200,24 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { getWeeklySuppliesEstimate } from '../composables/usePetStore'
 
 const estimate = computed(() => getWeeklySuppliesEstimate())
 const foodList = computed(() => estimate.value.foodList)
 const supplyList = computed(() => estimate.value.supplyList)
+const categoryList = computed(() => estimate.value.categoryList)
+
+const expandedCategories = ref([0])
+
+function toggleCategory(idx) {
+  const pos = expandedCategories.value.indexOf(idx)
+  if (pos === -1) {
+    expandedCategories.value.push(idx)
+  } else {
+    expandedCategories.value.splice(pos, 1)
+  }
+}
 
 const totalItems = computed(() => foodList.value.length + supplyList.value.length)
 const insufficientItems = computed(() => supplyList.value.filter(i => i.status === 'insufficient'))
@@ -378,6 +427,104 @@ function getCatClass(category) {
   color: #92400e;
   border-radius: 6px;
   font-size: 10px;
+}
+
+.category-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.category-group {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+.category-group.group-insufficient {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.category-group.group-prepare {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.category-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  background: #fff;
+  user-select: none;
+  transition: background 0.2s;
+}
+.category-header:hover {
+  background: #f9fafb;
+}
+.group-insufficient .category-header { background: #fef2f2; }
+.group-prepare .category-header { background: #fffbeb; }
+
+.expand-icon {
+  font-size: 10px;
+  color: #9ca3af;
+  width: 14px;
+  text-align: center;
+}
+
+.cat-badge.large {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.cat-summary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #4b5563;
+  flex-wrap: wrap;
+}
+
+.cat-summary strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.cat-count {
+  font-weight: 500;
+  color: #374151;
+}
+
+.divider {
+  color: #d1d5db;
+}
+
+.diff-num {
+  font-weight: 600;
+}
+
+.cat-status {
+  flex-shrink: 0;
+}
+
+.category-items {
+  padding: 0 16px 16px 16px;
+  background: #fff;
+}
+
+.inner-table {
+  font-size: 13px;
+}
+.inner-table th,
+.inner-table td {
+  padding: 8px 12px;
+}
+.inner-table th {
+  font-size: 12px;
+  background: #f9fafb;
 }
 
 .tips-section {
